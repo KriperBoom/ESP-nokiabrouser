@@ -21,6 +21,9 @@ String savedPass = "YOUR_WIFI_PASSWORD";
 #define BTN_BACK_PG    26 
 #define BTN_FORWARD_PG 25 
 
+// Цвета для интерфейса
+#define ST7735_DARKGRAY  0x4208 
+#define ST7735_LIGHTGRAY 0xC618 
 #define ST7735_IOS_DARK_BG   0x0000
 #define ST7735_IOS_LIGHT_BG  0xFFFF
 #define ST7735_IOS_CARD_DARK 0x18E3
@@ -30,7 +33,7 @@ String savedPass = "YOUR_WIFI_PASSWORD";
 
 enum AppState { STATE_HOME, STATE_BROWSER, STATE_SETTINGS, STATE_WIFI_SCAN, STATE_KEYBOARD, STATE_REBOOT_MENU };
 AppState currentState = STATE_HOME;
-AppState prevState = STATE_HOME; // Для возврата из меню перезагрузки
+AppState prevState = STATE_HOME;
 
 struct MenuItem {
   String name;
@@ -38,11 +41,11 @@ struct MenuItem {
 };
 
 MenuItem menuItems[] = {
-  { "ESP-NokiaBrowser", "https://kriperboom.github.io/ESP-nokiabrouser/index.html" },
-  { "NeverSSL", "http://neverssl.com" },
-  { "CNN Lite", "http://lite.cnn.com" },
-  { "Wi-Fi Setup", "" },
-  { "Settings", "" }
+  { "1. ESP-NokiaBrowser", "https://kriperboom.github.io/ESP-nokiabrouser/index.html" },
+  { "2. NeverSSL", "http://neverssl.com" },
+  { "3. CNN Lite", "http://lite.cnn.com" },
+  { "4. Wi-Fi Setup", "" },
+  { "5. Settings", "" }
 };
 const int menuCount = 5;
 int cursorIndex = 0;       
@@ -73,10 +76,7 @@ struct RenderLine {
   String text;
   bool isHeader;
   bool isLink;
-  bool isInput;
-  bool isButton;
   String linkUrl;
-  String inputVal;
   uint16_t textColor;
 };
 
@@ -85,7 +85,6 @@ int totalLines = 0;
 int browserCursorY = 0; 
 int scrollOffset = 0;    
 String currentPageTitle = "Browser";
-int activeInputIndex = -1;
 
 String foundNetworks[10];
 int wifiNetworkCount = 0;
@@ -154,83 +153,88 @@ void drawBootLogo() {
   int cx = 64, cy = 64, radius = 24;
   tft.drawCircle(cx, cy, radius, ST7735_IOS_BLUE);
   tft.drawCircle(cx, cy, radius + 1, ST7735_IOS_BLUE);
+  tft.drawEllipse(cx, cy, radius / 2, radius, ST7735_CYAN);
+  tft.drawEllipse(cx, cy, radius, radius / 2, ST7735_CYAN);
+  tft.drawFastHLine(cx - radius, cy, radius * 2, ST7735_CYAN);
+  tft.drawFastVLine(cx, cy - radius, radius * 2, ST7735_CYAN);
+
   tft.setTextSize(1);
   tft.setTextColor(ST7735_WHITE);
-  tft.setCursor(18, 110);
-  tft.print("iOS Browser v2");
+  tft.setCursor(20, 110);
+  tft.print("iOS Browser");
   delay(1500);
 }
 
 void drawNetworkStatus() {
-  tft.setCursor(112, 6);
+  tft.setCursor(114, 3);
   tft.setTextSize(1);
   tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
-  if (WiFi.status() == WL_CONNECTED) tft.print("5G"); 
-  else tft.print("no"); 
+  if (WiFi.status() == WL_CONNECTED) tft.print("V"); 
+  else tft.print("X"); 
 }
 
 void drawIOSHeader(String title) {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
-  tft.fillRect(0, 0, 128, 22, bgCol);
-  tft.drawFastHLine(0, 22, 128, darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_GRAY);
+  tft.fillRect(0, 0, 128, 16, bgCol);
   tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
   tft.setTextSize(1);
-  tft.setCursor(8, 7);
+  tft.setCursor(4, 4);
   if (title.length() > 14) title = title.substring(0, 14);
   tft.print(title);
   drawNetworkStatus();
 }
 
-// Модальное меню перезагрузки в стиле iOS (поверх всего)
 void drawRebootMenu() {
   uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
 
-  // Затемняем фон под модалкой
-  tft.fillRoundRect(14, 25, 100, 100, 10, cardBg);
-  tft.drawRoundRect(14, 25, 100, 100, 10, ST7735_IOS_BLUE);
+  tft.fillRoundRect(10, 30, 108, 90, 8, cardBg);
+  tft.drawRoundRect(10, 30, 108, 90, 8, ST7735_IOS_BLUE);
 
   tft.setTextSize(1);
   tft.setTextColor(textCol);
-  tft.setCursor(26, 35);
-  tft.print("Power Menu");
+  tft.setCursor(24, 42);
+  tft.print("Power Off Menu");
 
-  tft.drawFastHLine(20, 50, 88, ST7735_IOS_GRAY);
+  tft.drawFastHLine(16, 56, 96, ST7735_IOS_GRAY);
 
-  tft.setCursor(22, 62);
+  tft.setCursor(18, 70);
   tft.print("[SEL] Reboot");
   
-  tft.setCursor(22, 85);
+  tft.setCursor(18, 94);
   tft.print("[PWR] Cancel");
 }
 
 void drawHomePage() {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
-  uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+  uint16_t selBg = accentColors[accentColorIndex];
 
   tft.fillScreen(bgCol);
   drawIOSHeader("Home");
 
-  int startY = 30;
+  tft.setCursor(4, 22);
+  tft.setTextColor(textCol);
+  tft.print("Select item:");
+
+  int startY = 38;
   for (int i = 0; i < menuCount; i++) {
-    int itemY = startY + (i * 22);
+    int itemY = startY + (i * 19);
     if (i == cursorIndex) {
-      tft.fillRoundRect(6, itemY, 116, 18, 6, ST7735_IOS_BLUE);
-      tft.setTextColor(ST7735_WHITE, ST7735_IOS_BLUE);
+      tft.fillRoundRect(2, itemY - 2, 124, 15, 4, selBg);
+      tft.setTextColor(ST7735_WHITE, selBg);
     } else {
-      tft.fillRoundRect(6, itemY, 116, 18, 6, cardBg);
-      tft.setTextColor(textCol, cardBg);
+      tft.setTextColor(textCol, bgCol);
     }
-    tft.setCursor(12, itemY + 5);
+    tft.setCursor(6, itemY + 1);
     tft.print(menuItems[i].name);
   }
 }
 
 void drawSettingsPage() {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
-  uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+  uint16_t selBg = accentColors[accentColorIndex];
 
   tft.fillScreen(bgCol);
   drawIOSHeader("Settings");
@@ -246,43 +250,41 @@ void drawSettingsPage() {
   for (int i = 0; i < 4; i++) {
     int itemY = startY + (i * 26);
     if (i == settingsCursor) {
-      tft.fillRoundRect(8, itemY, 112, 22, 6, ST7735_IOS_BLUE);
-      tft.setTextColor(ST7735_WHITE, ST7735_IOS_BLUE);
+      tft.fillRoundRect(6, itemY - 2, 116, 20, 4, selBg);
+      tft.setTextColor(ST7735_WHITE, selBg);
     } else {
-      tft.fillRoundRect(8, itemY, 112, 22, 6, cardBg);
-      tft.setTextColor(textCol, cardBg);
+      tft.setTextColor(textCol, bgCol);
     }
-    tft.setCursor(14, itemY + 7);
+    tft.setCursor(10, itemY + 4);
     tft.print(sItems[i]);
   }
 }
 
 void drawWifiScanPage() {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
-  uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+  uint16_t selBg = accentColors[accentColorIndex];
 
   tft.fillScreen(bgCol);
-  drawIOSHeader("Wi-Fi Networks");
+  drawIOSHeader("Select Wi-Fi");
 
   if (wifiNetworkCount == 0) {
-    tft.setCursor(14, 50);
+    tft.setCursor(10, 40);
     tft.setTextColor(textCol);
-    tft.print("No networks found");
+    tft.print("No networks found!");
   } else {
-    int startY = 28;
-    for (int i = 0; i < wifiNetworkCount && i < 8; i++) {
-      int itemY = startY + (i * 15);
+    int startY = 25;
+    for (int i = 0; i < wifiNetworkCount && i < 10; i++) {
+      int itemY = startY + (i * 12);
       if (i == wifiCursor) {
-        tft.fillRoundRect(6, itemY, 116, 13, 4, ST7735_IOS_BLUE);
-        tft.setTextColor(ST7735_WHITE, ST7735_IOS_BLUE);
+        tft.fillRoundRect(2, itemY - 1, 124, 11, 3, selBg);
+        tft.setTextColor(ST7735_WHITE, selBg);
       } else {
-        tft.fillRoundRect(6, itemY, 116, 13, 4, cardBg);
-        tft.setTextColor(textCol, cardBg);
+        tft.setTextColor(textCol, bgCol);
       }
-      tft.setCursor(10, itemY + 3);
+      tft.setCursor(4, itemY);
       String ssidStr = foundNetworks[i];
-      if (ssidStr.length() > 16) ssidStr = ssidStr.substring(0, 16);
+      if (ssidStr.length() > 18) ssidStr = ssidStr.substring(0, 18);
       tft.print(ssidStr);
     }
   }
@@ -290,44 +292,46 @@ void drawWifiScanPage() {
 
 void drawVirtualKeyboard() {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
-  uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+  uint16_t selBg = accentColors[accentColorIndex];
 
   tft.fillScreen(bgCol);
-  drawIOSHeader("Keyboard");
+  drawIOSHeader("Wi-Fi Pass");
 
-  tft.fillRoundRect(6, 26, 116, 20, 6, cardBg);
-  tft.drawRoundRect(6, 26, 116, 20, 6, ST7735_IOS_BLUE);
-  tft.setCursor(12, 32);
-  tft.setTextColor(textCol, cardBg);
+  tft.drawRect(4, 18, 120, 16, textCol);
+  tft.setCursor(8, 22);
+  tft.setTextColor(textCol);
   String showText = keyboardInputText;
-  if (showText.length() > 16) showText = showText.substring(showText.length() - 16);
+  if (showText.length() > 18) showText = showText.substring(showText.length() - 18);
   tft.print(showText + "_");
 
-  int startY = 52;
+  tft.fillRect(2, 38, 124, 102, ST7735_DARKGRAY);
+  tft.drawRect(2, 38, 124, 102, ST7735_DARKGRAY);
+
+  int startY = 42;
   for (int r = 0; r < 4; r++) {
     int colsInRow = (kbMode == 2) ? symCols[r] : ((kbMode == 1) ? lowCols[r] : capsCols[r]);
-    int totalWidth = 116;
+    int totalWidth = 120;
     int keyWidth = totalWidth / colsInRow;
-    int startX = 6;
+    int startX = 4;
 
     for (int c = 0; c < colsInRow; c++) {
       String keyStr = (kbMode == 2) ? kbSym[r][c] : ((kbMode == 1) ? kbLow[r][c] : kbCaps[r][c]);
       int x = startX + (c * keyWidth);
-      int y = startY + (r * 22);
+      int y = startY + (r * 24);
       int w = keyWidth - 2;
-      int h = 19;
+      int h = 21;
 
       if (r == kbRow && c == kbCol) {
-        tft.fillRoundRect(x, y, w, h, 4, ST7735_IOS_BLUE);
-        tft.setTextColor(ST7735_WHITE, ST7735_IOS_BLUE);
+        tft.fillRoundRect(x, y, w, h, 4, selBg);
+        tft.setTextColor(ST7735_WHITE, selBg);
       } else {
-        tft.fillRoundRect(x, y, w, h, 4, cardBg);
-        tft.setTextColor(textCol, cardBg);
+        tft.fillRoundRect(x, y, w, h, 4, ST7735_IOS_CARD_DARK);
+        tft.setTextColor(ST7735_WHITE, ST7735_IOS_CARD_DARK);
       }
 
       int textX = x + (w - (keyStr.length() * 6)) / 2;
-      int textY = y + 6;
+      int textY = y + 7;
       tft.setCursor(textX, textY);
       tft.print(keyStr);
     }
@@ -337,34 +341,54 @@ void drawVirtualKeyboard() {
 void drawContentPage() {
   uint16_t bgCol = darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
-  uint16_t cardBg = darkMode ? ST7735_IOS_CARD_DARK : ST7735_IOS_CARD_LGT;
+  uint16_t selBg = accentColors[accentColorIndex];
+  uint16_t normalCursorBg = darkMode ? ST7735_DARKGRAY : ST7735_LIGHTGRAY;
+  uint16_t normalCursorText = darkMode ? ST7735_WHITE : ST7735_BLACK;
 
   tft.fillScreen(bgCol);
   drawIOSHeader(currentPageTitle);
 
   if (browserCursorY < scrollOffset) scrollOffset = browserCursorY;
-  if (browserCursorY >= scrollOffset + 10) scrollOffset = browserCursorY - 9;
+  if (browserCursorY >= scrollOffset + 11) scrollOffset = browserCursorY - 10;
 
-  int startY = 26;
+  int startY = 18;
   for (int i = scrollOffset; i < totalLines; i++) {
-    tft.setCursor(4, startY);
+    tft.setCursor(2, startY);
     
-    if (i == browserCursorY) {
-      tft.fillRoundRect(2, startY - 2, 124, 13, 3, ST7735_IOS_BLUE);
-      tft.setTextColor(ST7735_WHITE, ST7735_IOS_BLUE);
-    } else if (screenLines[i].isButton) {
-      tft.fillRoundRect(2, startY - 2, 124, 13, 3, cardBg);
-      tft.setTextColor(ST7735_IOS_BLUE, cardBg);
-    } else if (screenLines[i].isInput) {
-      tft.fillRoundRect(2, startY - 2, 124, 13, 3, cardBg);
-      tft.setTextColor(ST7735_YELLOW, cardBg);
+    if (screenLines[i].isHeader) {
+      tft.setTextSize(2); 
+      if (i == browserCursorY) {
+        int w = screenLines[i].text.length() * 12;
+        tft.fillRoundRect(2, startY - 1, w + 4, 16, 3, selBg);
+        tft.setTextColor(ST7735_WHITE, selBg);
+      } else {
+        tft.setTextColor(screenLines[i].textColor, bgCol);
+      }
+      tft.print(screenLines[i].text);
+      startY += 18; 
     } else {
-      tft.setTextColor(textCol, bgCol);
-    }
+      tft.setTextSize(1);
+      
+      if (i == browserCursorY) {
+        int w = screenLines[i].text.length() * 6;
+        if (screenLines[i].isLink) {
+          tft.fillRoundRect(2, startY - 1, w + 4, 10, 2, selBg);
+          tft.setTextColor(ST7735_WHITE, selBg);
+        } else {
+          tft.fillRoundRect(2, startY - 1, w + 4, 10, 2, normalCursorBg);
+          tft.setTextColor(normalCursorText, normalCursorBg);
+        }
+      } else if (screenLines[i].isLink) {
+        tft.setTextColor(selBg, bgCol);
+      } else {
+        tft.setTextColor(screenLines[i].textColor, bgCol);
+      }
 
-    tft.print(screenLines[i].text);
-    startY += 13;
-    if (startY > 145) break;
+      tft.print(screenLines[i].text);
+      startY += 10; 
+    }
+    
+    if (startY > 145) break; 
   }
 }
 
@@ -385,19 +409,14 @@ void fetchRealWebpage(String url, bool addToHistory) {
 
   if (httpCode > 0 && httpCode == HTTP_CODE_OK) {
     String payload = http.getString();
-    // Парсер HTML
     totalLines = 0;
     currentPageTitle = "Webpage";
-    // (логика добавления линий сохранена)
     if (addToHistory && historyPos < 9) {
       historyPos++;
       historyUrls[historyPos] = url;
       historyTitles[historyPos] = currentPageTitle;
       historyCount = historyPos + 1;
     }
-  } else {
-    totalLines = 0;
-    // Ошибка загрузки
   }
   http.end();
 
@@ -432,7 +451,6 @@ unsigned long lastDebounce = 0;
 void loop() {
   bool currentPowerState = digitalRead(BTN_POWER);
 
-  // Отслеживание зажатия кнопки питания на 5 секунд для вызова меню перезагрузки
   if (currentPowerState == LOW) {
     if (lastPowerState == HIGH) {
       powerPressStartTime = millis();
@@ -446,9 +464,7 @@ void loop() {
       }
     }
   } else {
-    // Кнопка отпущена
     if (lastPowerState == LOW && !powerHeldTriggered) {
-      // Обычное короткое нажатие (сон / пробуждение)
       if (millis() - lastDebounce > 300) {
         screenOn = !screenOn;
         if (screenOn) fadeInBacklight(); else fadeOutBacklight();
@@ -461,13 +477,10 @@ void loop() {
 
   if (currentState == STATE_REBOOT_MENU) {
     if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > 200) {
-      // Перезагрузка ESP32
       ESP.restart();
     }
     if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > 200) {
-      // Отмена и возврат назад
       currentState = prevState;
-      // Перерисовка текущего экрана
       if (currentState == STATE_HOME) drawHomePage();
       else if (currentState == STATE_SETTINGS) drawSettingsPage();
       else if (currentState == STATE_WIFI_SCAN) drawWifiScanPage();
@@ -629,17 +642,15 @@ void loop() {
       if (selChar == "DEL") {
         if (keyboardInputText.length() > 0) keyboardInputText = keyboardInputText.substring(0, keyboardInputText.length() - 1);
       } else if (selChar == "ENT") {
-        if (inputTargetType == "PASS") {
-          savedSsid = tempSsid;
-          savedPass = keyboardInputText;
-          tft.fillScreen(darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG);
-          drawIOSHeader("Connecting...");
-          WiFi.begin(savedSsid.c_str(), savedPass.c_str());
-          int timeout = 0;
-          while (WiFi.status() != WL_CONNECTED && timeout < 15) { delay(500); timeout++; }
-          currentState = STATE_HOME;
-          drawHomePage();
-        }
+        savedSsid = tempSsid;
+        savedPass = keyboardInputText;
+        tft.fillScreen(darkMode ? ST7735_IOS_DARK_BG : ST7735_IOS_LIGHT_BG);
+        drawIOSHeader("Connecting...");
+        WiFi.begin(savedSsid.c_str(), savedPass.c_str());
+        int timeout = 0;
+        while (WiFi.status() != WL_CONNECTED && timeout < 15) { delay(500); timeout++; }
+        currentState = STATE_HOME;
+        drawHomePage();
       } else if (selChar == "SPC") {
         keyboardInputText += " ";
       } else if (selChar == "^") {

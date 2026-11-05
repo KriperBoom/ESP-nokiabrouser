@@ -25,8 +25,9 @@ String savedPass = "YOUR_WIFI_PASSWORD";
 #define ST7735_LIGHTGRAY 0xC618 
 #define ST7735_IOS_BG    0x10A2 
 
-enum AppState { STATE_HOME, STATE_BROWSER, STATE_SETTINGS, STATE_WIFI_SCAN, STATE_KEYBOARD };
+enum AppState { STATE_HOME, STATE_BROWSER, STATE_SETTINGS, STATE_WIFI_SCAN, STATE_KEYBOARD, STATE_REBOOT_MENU };
 AppState currentState = STATE_HOME;
+AppState prevState = STATE_HOME;
 
 struct MenuItem {
   String name;
@@ -35,8 +36,8 @@ struct MenuItem {
 
 MenuItem menuItems[] = {
   { "1. ESP-NokiaBrouser", "https://kriperboom.github.io/ESP-nokiabrouser/index.html" },
-  { "2. NeverSSL", "http://neverssl.com" },
-  { "3. CNN Lite", "http://lite.cnn.com" },
+  { "2. Custom URL", "CUSTOM_URL" },
+  { "", "" },
   { "4. Wi-Fi Setup", "" },
   { "5. Settings", "" }
 };
@@ -57,6 +58,8 @@ bool isSleeping = false;
 int settingsCursor = 0; 
 bool screenOn = true;
 bool lastPowerState = HIGH; 
+unsigned long powerPressStartTime = 0;
+bool powerHeldTriggered = false;
 
 String historyUrls[10];
 String historyTitles[10];
@@ -86,7 +89,7 @@ int kbRow = 0;
 int kbCol = 0;
 String inputTargetType = ""; 
 String tempSsid = "";
-int kbMode = 0; 
+int kbMode = 1; // 1 — маленькие буквы по умолчанию
 
 const char* kbCaps[4][10] = {
   { "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" },
@@ -138,22 +141,32 @@ void resetSleepTimer() {
   }
 }
 
-void drawBootLogo() {
+// Логотип CPhone с надписью ESP-NokiaBrouser внизу
+void drawCPhoneLogo() {
   fadeInBacklight();
   tft.fillScreen(ST7735_BLACK);
-  int cx = 64, cy = 64, radius = 24;
-  tft.drawCircle(cx, cy, radius, ST7735_BLUE);
-  tft.drawCircle(cx, cy, radius + 1, ST7735_BLUE);
-  tft.drawEllipse(cx, cy, radius / 2, radius, ST7735_CYAN);
-  tft.drawEllipse(cx, cy, radius, radius / 2, ST7735_CYAN);
-  tft.drawFastHLine(cx - radius, cy, radius * 2, ST7735_CYAN);
-  tft.drawFastVLine(cx, cy - radius, radius * 2, ST7735_CYAN);
+  
+  int cx = 64;
+  int cy = 54;
+  int boxSize = 56;
+
+  tft.fillRoundRect(cx - boxSize/2, cy - boxSize/2, boxSize, boxSize, 12, ST7735_WHITE);
+  tft.drawRoundRect(cx - boxSize/2 - 1, cy - boxSize/2 - 1, boxSize + 2, boxSize + 2, 13, ST7735_DARKGRAY);
+
+  tft.fillCircle(cx, cy, 20, ST7735_BLACK);
+  tft.drawCircle(cx, cy, 20, ST7735_WHITE);
+  tft.drawEllipse(cx, cy, 8, 20, ST7735_WHITE);
+  tft.drawFastHLine(cx - 19, cy, 38, ST7735_WHITE);
+
+  tft.setTextSize(2);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setCursor(cx - 32, cy + 34);
+  tft.print("CPhone");
 
   tft.setTextSize(1);
-  tft.setTextColor(ST7735_WHITE);
-  tft.setCursor(20, 110);
+  tft.setTextColor(ST7735_LIGHTGRAY);
+  tft.setCursor(20, cy + 56);
   tft.print("ESP-NokiaBrouser");
-  delay(1500);
 }
 
 uint16_t parseColor(String colorStr) {
@@ -290,6 +303,37 @@ void drawNetworkStatus() {
   }
 }
 
+void drawRebootMenu() {
+  uint16_t selBg = accentColors[accentColorIndex];
+  uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+
+  tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
+  tft.fillRect(0, 0, 128, 14, selBg);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(2, 3);
+  tft.print("Power Menu");
+
+  tft.fillRect(10, 26, 108, 96, ST7735_IOS_BG);
+  tft.drawRect(10, 26, 108, 96, ST7735_DARKGRAY);
+
+  tft.setTextColor(ST7735_WHITE);
+  tft.setCursor(20, 38);
+  tft.print("Restart Device?");
+
+  tft.drawFastHLine(16, 54, 96, ST7735_DARKGRAY);
+
+  tft.setCursor(18, 68);
+  tft.print("[SEL] Reboot");
+  
+  tft.setCursor(18, 92);
+  tft.print("[PWR] Cancel");
+
+  tft.setCursor(2, 145);
+  tft.setTextColor(textCol, darkMode ? ST7735_BLACK : ST7735_WHITE);
+  tft.print("[SEL]=Confirm [PWR]=Back");
+}
+
 void drawHomePage() {
   uint16_t bgCol = darkMode ? ST7735_BLACK : ST7735_WHITE;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
@@ -301,7 +345,7 @@ void drawHomePage() {
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(1);
   tft.setCursor(2, 3);
-  tft.print("ESP-NokiaBrouser");
+  tft.print("CPhone OS");
   
   drawNetworkStatus();
 
@@ -415,7 +459,11 @@ void drawVirtualKeyboard() {
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(1);
   tft.setCursor(2, 3);
-  tft.print("Wi-Fi Pass:");
+  if (inputTargetType == "CUSTOM_URL") {
+    tft.print("Enter URL:");
+  } else {
+    tft.print("Wi-Fi Pass:");
+  }
 
   tft.drawRect(4, 18, 120, 16, textCol);
   tft.setCursor(8, 22);
@@ -629,17 +677,12 @@ void setup() {
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(0); 
 
-  drawBootLogo();
-
-  tft.fillScreen(ST7735_BLACK);
-  tft.setCursor(2, 20);
-  tft.setTextColor(ST7735_WHITE);
-  tft.print("Starting offline...");
+  drawCPhoneLogo();
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(savedSsid.c_str(), savedPass.c_str());
   unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 2000) {
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 3000) {
     delay(100);
   }
 
@@ -652,19 +695,52 @@ const int delayTime = 150;
 
 void loop() {
   bool currentPowerState = digitalRead(BTN_POWER);
-  if (currentPowerState == LOW && lastPowerState == HIGH) {
-    if (millis() - lastDebounce > 300) {
-      screenOn = !screenOn;
-      if (screenOn) {
-        fadeInBacklight();
-      } else {
-        fadeOutBacklight();
+
+  if (currentPowerState == LOW) {
+    if (lastPowerState == HIGH) {
+      powerPressStartTime = millis();
+      powerHeldTriggered = false;
+    } else if (!powerHeldTriggered && (millis() - powerPressStartTime > 5000)) {
+      powerHeldTriggered = true; 
+      if (currentState != STATE_REBOOT_MENU) {
+        prevState = currentState;
+        currentState = STATE_REBOOT_MENU;
+        drawRebootMenu();
       }
-      lastDebounce = millis();
-      resetSleepTimer();
+    }
+  } else {
+    if (lastPowerState == LOW) {
+      if (!powerHeldTriggered) { 
+        if (millis() - lastDebounce > 300) {
+          screenOn = !screenOn;
+          if (screenOn) {
+            fadeInBacklight();
+          } else {
+            fadeOutBacklight();
+          }
+          lastDebounce = millis();
+          resetSleepTimer();
+        }
+      }
     }
   }
   lastPowerState = currentPowerState;
+
+  if (currentState == STATE_REBOOT_MENU) {
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > 200) {
+      ESP.restart();
+    }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > 200) {
+      currentState = prevState;
+      if (currentState == STATE_HOME) drawHomePage();
+      else if (currentState == STATE_SETTINGS) drawSettingsPage();
+      else if (currentState == STATE_WIFI_SCAN) drawWifiScanPage();
+      else if (currentState == STATE_KEYBOARD) drawVirtualKeyboard();
+      else if (currentState == STATE_BROWSER) drawContentPage();
+      lastDebounce = millis();
+    }
+    return;
+  }
 
   if (screenOn && autoSleepLevel > 0 && !isSleeping) {
     if (millis() - lastActivityTime > sleepIntervals[autoSleepLevel]) {
@@ -711,7 +787,17 @@ void loop() {
     }
     if (digitalRead(BTN_SELECT) == LOW) {
       if (millis() - lastDebounce > delayTime) {
-        if (cursorIndex == 3) {
+        if (cursorIndex == 1) {
+          // Custom URL
+          currentState = STATE_KEYBOARD;
+          inputTargetType = "CUSTOM_URL";
+          keyboardInputText = "https://";
+          kbRow = 0; kbCol = 0; kbMode = 1; // Ставим маленькие буквы
+          drawVirtualKeyboard();
+        } else if (cursorIndex == 2) {
+          // Разделитель
+        } else if (cursorIndex == 3) {
+          // Wi-Fi Setup
           currentState = STATE_WIFI_SCAN;
           wifiCursor = 0;
           
@@ -730,10 +816,12 @@ void loop() {
           }
           drawWifiScanPage();
         } else if (cursorIndex == 4) {
+          // Settings
           currentState = STATE_SETTINGS;
           settingsCursor = 0;
           drawSettingsPage();
         } else {
+          // Сайты из списка
           currentState = STATE_BROWSER;
           historyPos = -1;
           historyCount = 0;
@@ -811,7 +899,7 @@ void loop() {
           inputTargetType = "PASS"; 
           keyboardInputText = "";
           kbRow = 0; kbCol = 0;
-          kbMode = 0;
+          kbMode = 1; // Маленькие буквы по умолчанию
           drawVirtualKeyboard();
         } else {
           currentState = STATE_HOME;
@@ -873,24 +961,31 @@ void loop() {
             keyboardInputText = keyboardInputText.substring(0, keyboardInputText.length() - 1);
           }
         } else if (selChar == "ENT") {
-          // Прямая обработка виртуального Enter
-          savedSsid = tempSsid;
-          savedPass = keyboardInputText;
-          
-          tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
-          tft.setCursor(2, 20);
-          tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
-          tft.print("Connecting to:\n" + savedSsid);
-          
-          WiFi.begin(savedSsid.c_str(), savedPass.c_str());
-          int timeout = 0;
-          while (WiFi.status() != WL_CONNECTED && timeout < 15) {
-            delay(500);
-            timeout++;
+          if (inputTargetType == "CUSTOM_URL") {
+            String targetUrl = keyboardInputText;
+            currentState = STATE_BROWSER;
+            historyPos = -1;
+            historyCount = 0;
+            fetchRealWebpage(targetUrl, true);
+          } else {
+            savedSsid = tempSsid;
+            savedPass = keyboardInputText;
+            
+            tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
+            tft.setCursor(2, 20);
+            tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
+            tft.print("Connecting to:\n" + savedSsid);
+            
+            WiFi.begin(savedSsid.c_str(), savedPass.c_str());
+            int timeout = 0;
+            while (WiFi.status() != WL_CONNECTED && timeout < 15) {
+              delay(500);
+              timeout++;
+            }
+            
+            currentState = STATE_HOME;
+            drawHomePage();
           }
-          
-          currentState = STATE_HOME;
-          drawHomePage();
         } else if (selChar == "SPC") {
           keyboardInputText += " ";
         } else if (selChar == "^") {

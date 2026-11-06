@@ -1,4 +1,4 @@
-#include <Adafruit_GFX.h>
+include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -114,6 +114,29 @@ const char* kbSym[4][10] = {
   { "^", "ABC", "SPC", "DEL", "ENT", "", "", "", "", "" }
 };
 const int symCols[4] = { 10, 10, 10, 5 };
+
+String utf8rus(String source) {
+  int length = source.length();
+  String target = "";
+  unsigned char n;
+  for (int i = 0; i < length; i++) {
+    n = source[i];
+    if (n < 128) {
+      target += (char)n;
+    } else {
+      i++;
+      unsigned char n2 = source[i];
+      if (n == 208) {
+        if (n2 >= 144 && n2 <= 191) target += (char)(n2 + 48); // А-П
+        else if (n2 == 129) target += (char)168; // Ё
+      } else if (n == 209) {
+        if (n2 >= 128 && n2 <= 143) target += (char)(n2 + 112); // р-я
+        else if (n2 == 145) target += (char)184; // ё
+      }
+    }
+  }
+  return target;
+}
 
 void fetchRealWebpage(String url, bool addToHistory = true);
 

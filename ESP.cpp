@@ -1,4 +1,4 @@
-#include <Adafruit_GFX.h>
+##include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -11,8 +11,8 @@
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
-String savedSsid = "YOUR_WIFI_NAME";
-String savedPass = "YOUR_WIFI_PASSWORD";
+String savedSsid = "";
+String savedPass = "";
 
 #define BTN_UP         13 
 #define BTN_DOWN       12 
@@ -25,46 +25,52 @@ String savedPass = "YOUR_WIFI_PASSWORD";
 #define ST7735_LIGHTGRAY 0xC618 
 #define ST7735_IOS_BG    0x10A2 
 
-enum AppState { STATE_HOME, STATE_BROWSER, STATE_SETTINGS, STATE_WIFI_SCAN, STATE_KEYBOARD, STATE_REBOOT_MENU };
-AppState currentState = STATE_HOME;
-AppState prevState = STATE_HOME;
-
-struct MenuItem {
-  String name;
-  String url;
-};
-
-MenuItem menuItems[] = {
-  { "1. ESP-NokiaBrouser", "https://kriperboom.github.io/ESP-nokiabrouser/index.html" },
-  { "2. Custom URL", "CUSTOM_URL" },
-  { "", "" },
-  { "4. Wi-Fi Setup", "" },
-  { "5. Settings", "" }
-};
-const int menuCount = 5;
-int cursorIndex = 0;       
+enum BrowserState { BSTATE_HOME, BSTATE_KEYBOARD, BSTATE_VIEWER, BSTATE_HISTORY, BSTATE_WIFI_SCAN, BSTATE_SETTINGS, BSTATE_REBOOT_MENU };
+BrowserState browserState = BSTATE_HOME;
+BrowserState previousBrowserState = BSTATE_HOME;
 
 bool darkMode = true;
 int accentColorIndex = 0; 
 uint16_t accentColors[] = { ST7735_BLUE, ST7735_RED, ST7735_GREEN, ST7735_WHITE };
 String accentNames[] = { "BLUE", "RED", "GREEN", "WHITE" };
 
-int autoSleepLevel = 0;
-unsigned long sleepIntervals[] = { 0, 15000, 30000, 60000 };
-String sleepNames[] = { "OFF", "15s", "30s", "60s" };
-unsigned long lastActivityTime = 0;
-bool isSleeping = false;
+bool incognitoMode = false;
+int homeMenuCursor = 0; 
 
-int settingsCursor = 0; 
-bool screenOn = true;
-bool lastPowerState = HIGH; 
+bool isScreenOff = false;
+bool isScreenLocked = false; 
+
+int clockHours = 12;
+int clockMins = 0;
+unsigned long lastMinuteMillis = 0;
+
+int settingsCursor = 0;
+int autoSleepLevel = 0; 
+unsigned long sleepIntervals[] = { 0, 15000, 30000, 60000 };
+unsigned long lastActivityTime = 0;
+bool lastPowerState = HIGH;
 unsigned long powerPressStartTime = 0;
 bool powerHeldTriggered = false;
 
-String historyUrls[10];
-String historyTitles[10];
-int historyCount = 0;
-int historyPos = -1;
+String currentUrl = "https://kriperboom.github.io/ESP-nokiabrouser/index.html";
+String keyboardInputText = "";
+int kbRow = 0;
+int kbCol = 0;
+int kbMode = 1; 
+
+const char* kbLow[4][10] = {
+  { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" },
+  { "a", "s", "d", "f", "g", "h", "j", "k", "l", "@" },
+  { "z", "x", "c", "v", "b", "n", "m", ".", "_", "-" },
+  { "123", "[_]", "[_]", "DEL", "ENT", "", "", "", "", "" }
+};
+
+const char* kbSym[4][10] = {
+  { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
+  { "(", ")", "<", ">", "_", "-", "?", "!", ".", "," },
+  { "/", "@", "#", "$", "%", "&", "*", "+", "=", ";" },
+  { "ABC", "[_]", "[_]", "DEL", "ENT", "", "", "", "", "" }
+};
 
 struct RenderLine {
   String text;
@@ -76,95 +82,65 @@ struct RenderLine {
 
 RenderLine screenLines[40];
 int totalLines = 0;
-int browserCursorY = 0; 
+int viewerCursorY = 0; 
 int scrollOffset = 0;    
 String currentPageTitle = "Browser";
 
+String historyUrls[10];
+String historyTitles[10];
+int historyCount = 0;
+int historyCursor = 0;
+
 String foundNetworks[10];
+bool foundEncrypted[10];
 int wifiNetworkCount = 0;
 int wifiCursor = 0;
 
-String keyboardInputText = "";
-int kbRow = 0;
-int kbCol = 0;
-String inputTargetType = ""; 
-String tempSsid = "";
-int kbMode = 1; // 1 — маленькие буквы по умолчанию
-
-const char* kbCaps[4][10] = {
-  { "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" },
-  { "A", "S", "D", "F", "G", "H", "J", "K", "L", "@" },
-  { "Z", "X", "C", "V", "B", "N", "M", ".", "_", "-" },
-  { "^", "123", "SPC", "DEL", "ENT", "", "", "", "", "" }
-};
-const int capsCols[4] = { 10, 10, 10, 5 };
-
-const char* kbLow[4][10] = {
-  { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" },
-  { "a", "s", "d", "f", "g", "h", "j", "k", "l", "@" },
-  { "z", "x", "c", "v", "b", "n", "m", ".", "_", "-" },
-  { "^", "123", "SPC", "DEL", "ENT", "", "", "", "", "" }
-};
-const int lowCols[4] = { 10, 10, 10, 5 };
-
-const char* kbSym[4][10] = {
-  { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
-  { "(", ")", "<", ">", "_", "-", "?", "!", ".", "," },
-  { "/", "@", "#", "$", "%", "&", "*", "+", "=", ";" },
-  { "^", "ABC", "SPC", "DEL", "ENT", "", "", "", "", "" }
-};
-const int symCols[4] = { 10, 10, 10, 5 };
-
-String utf8rus(String source) {
-  int length = source.length();
-  String target = "";
-  unsigned char n;
-  for (int i = 0; i < length; i++) {
-    n = source[i];
-    if (n < 128) {
-      target += (char)n;
-    } else {
-      i++;
-      unsigned char n2 = source[i];
-      if (n == 208) {
-        if (n2 >= 144 && n2 <= 191) target += (char)(n2 + 48); // А-П
-        else if (n2 == 129) target += (char)168; // Ё
-      } else if (n == 209) {
-        if (n2 >= 128 && n2 <= 143) target += (char)(n2 + 112); // р-я
-        else if (n2 == 145) target += (char)184; // ё
-      }
-    }
-  }
-  return target;
-}
-
 void fetchRealWebpage(String url, bool addToHistory = true);
+void drawBrowserHome();
+void drawVirtualKeyboard();
+void drawContentView();
+void drawHistoryPage();
+void drawWifiScanPage();
+void drawSettingsPage();
+void drawLockScreen();
+void drawRebootMenu();
 
 void fadeInBacklight() {
-  for (int i = 0; i <= 255; i += 15) {
+  for (int i = 0; i <= 255; i += 25) {
     analogWrite(TFT_LED, i);
-    delay(10);
+    delay(8);
   }
   analogWrite(TFT_LED, 255);
 }
 
 void fadeOutBacklight() {
-  for (int i = 255; i >= 0; i -= 15) {
+  for (int i = 255; i >= 0; i -= 25) {
     analogWrite(TFT_LED, i);
-    delay(10);
+    delay(8);
   }
   analogWrite(TFT_LED, 0);
 }
 
 void resetSleepTimer() {
   lastActivityTime = millis();
-  if (isSleeping) {
-    isSleeping = false;
-    fadeInBacklight();
+}
+
+void updateClock() {
+  if (millis() - lastMinuteMillis > 60000) {
+    lastMinuteMillis = millis();
+    clockMins++;
+    if (clockMins >= 60) {
+      clockMins = 0;
+      clockHours = (clockHours + 1) % 24;
+    }
   }
 }
 
-// Логотип CPhone с надписью ESP-NokiaBrouser внизу
+String getFormattedTime() {
+  return (clockHours < 10 ? "0" : "") + String(clockHours) + ":" + (clockMins < 10 ? "0" : "") + String(clockMins);
+}
+
 void drawCPhoneLogo() {
   fadeInBacklight();
   tft.fillScreen(ST7735_BLACK);
@@ -183,13 +159,14 @@ void drawCPhoneLogo() {
 
   tft.setTextSize(2);
   tft.setTextColor(ST7735_WHITE);
-  tft.setCursor(cx - 32, cy + 34);
-  tft.print("CPhone");
+  tft.setCursor(cx - 38, cy + 34);
+  tft.print("CBrowser");
 
   tft.setTextSize(1);
   tft.setTextColor(ST7735_LIGHTGRAY);
   tft.setCursor(20, cy + 56);
-  tft.print("ESP-NokiaBrouser");
+  tft.print("ESP32 Web Engine");
+  delay(1200);
 }
 
 uint16_t parseColor(String colorStr) {
@@ -203,6 +180,27 @@ uint16_t parseColor(String colorStr) {
   if (colorStr == "cyan") return ST7735_CYAN;
   if (colorStr == "magenta") return ST7735_MAGENTA;
   return darkMode ? ST7735_WHITE : ST7735_BLACK; 
+}
+
+void drawPixelIcon(int x, int y, int type, uint16_t color) {
+  if (type == 0) {
+    tft.drawCircle(x + 4, y + 4, 3, color);
+    tft.drawFastHLine(x + 1, y + 4, 6, color);
+  } else if (type == 1) {
+    tft.fillRect(x + 1, y + 1, 2, 2, color);
+    tft.fillRect(x + 5, y + 1, 2, 2, color);
+    tft.fillRect(x + 1, y + 5, 2, 2, color);
+    tft.fillRect(x + 5, y + 5, 2, 2, color);
+  } else if (type == 2) {
+    tft.drawCircle(x + 4, y + 4, 3, color);
+    tft.drawFastVLine(x + 4, y + 2, 3, color);
+  } else if (type == 3) {
+    tft.drawRect(x, y + 2, 8, 4, color);
+  } else if (type == 4) {
+    tft.drawRect(x + 2, y + 2, 4, 4, color);
+    tft.drawPixel(x + 4, y, color);
+    tft.drawPixel(x + 4, y + 7, color);
+  }
 }
 
 void addWrappedText(String text, bool isHeader, bool isLink, String linkUrl, uint16_t color) {
@@ -241,7 +239,7 @@ void parseHTMLToLines(String html) {
     }
   }
 
-  addWrappedText("<-- Back to Menu", false, true, "HOME_BACK", accentColors[accentColorIndex]);
+  addWrappedText("<-- Back to Browser", false, true, "HOME_BACK", accentColors[accentColorIndex]);
 
   int scriptStart = html.indexOf("<script");
   while (scriptStart != -1) {
@@ -326,6 +324,34 @@ void drawNetworkStatus() {
   }
 }
 
+void drawLockScreen() {
+  tft.fillScreen(ST7735_BLACK);
+  
+  tft.drawRoundRect(10, 15, 108, 128, 8, accentColors[accentColorIndex]);
+  tft.drawRoundRect(11, 16, 106, 126, 7, ST7735_DARKGRAY);
+
+  tft.setTextSize(1);
+  tft.setTextColor(ST7735_LIGHTGRAY);
+  tft.setCursor(20, 26);
+  tft.print("CPhone Lock");
+
+  tft.setTextSize(3);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setCursor(22, 55);
+  tft.print(getFormattedTime());
+
+  tft.setTextSize(1);
+  tft.setTextColor(accentColors[accentColorIndex]);
+  tft.setCursor(48, 88);
+  tft.print("[ LOCKED ]");
+
+  tft.setTextColor(ST7735_LIGHTGRAY);
+  tft.setCursor(22, 114);
+  tft.print("Press [SEL] to");
+  tft.setCursor(34, 126);
+  tft.print("unlock");
+}
+
 void drawRebootMenu() {
   uint16_t selBg = accentColors[accentColorIndex];
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
@@ -343,12 +369,10 @@ void drawRebootMenu() {
   tft.setTextColor(ST7735_WHITE);
   tft.setCursor(20, 38);
   tft.print("Restart Device?");
-
   tft.drawFastHLine(16, 54, 96, ST7735_DARKGRAY);
 
   tft.setCursor(18, 68);
   tft.print("[SEL] Reboot");
-  
   tft.setCursor(18, 92);
   tft.print("[PWR] Cancel");
 
@@ -357,41 +381,59 @@ void drawRebootMenu() {
   tft.print("[SEL]=Confirm [PWR]=Back");
 }
 
-void drawHomePage() {
+void drawCurrentState() {
+  if (browserState == BSTATE_HOME) drawBrowserHome();
+  else if (browserState == BSTATE_SETTINGS) drawSettingsPage();
+  else if (browserState == BSTATE_HISTORY) drawHistoryPage();
+  else if (browserState == BSTATE_WIFI_SCAN) drawWifiScanPage();
+  else if (browserState == BSTATE_KEYBOARD) drawVirtualKeyboard();
+  else if (browserState == BSTATE_VIEWER) drawContentView();
+  else if (browserState == BSTATE_REBOOT_MENU) drawRebootMenu();
+}
+
+void drawBrowserHome() {
   uint16_t bgCol = darkMode ? ST7735_BLACK : ST7735_WHITE;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
   uint16_t selBg = accentColors[accentColorIndex];
   uint16_t selText = (accentColorIndex == 2 || accentColorIndex == 3) ? ST7735_BLACK : ST7735_WHITE;
 
   tft.fillScreen(bgCol);
-  tft.fillRect(0, 0, 128, 14, accentColors[accentColorIndex]);
+  tft.fillRect(0, 0, 128, 14, selBg);
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(1);
   tft.setCursor(2, 3);
-  tft.print("CPhone OS");
-  
+  tft.print(getFormattedTime());
   drawNetworkStatus();
 
-  tft.setCursor(4, 20);
-  tft.setTextColor(textCol);
-  tft.print("Select item:");
+  String options[5] = {
+    "1. Open URL...",
+    "2. Quick Demo Page",
+    "3. History (" + String(historyCount) + ")",
+    incognitoMode ? "4. Incognito: ON" : "4. Incognito: OFF",
+    "5. Settings & Time"
+  };
 
-  int startY = 38;
-  for (int i = 0; i < menuCount; i++) {
-    int itemY = startY + (i * 19);
-    if (i == cursorIndex) {
-      tft.fillRect(2, itemY - 2, 124, 15, selBg);
+  int iconTypes[5] = {0, 1, 2, 3, 4};
+
+  int startY = 22;
+  for (int i = 0; i < 5; i++) {
+    int itemY = startY + (i * 22);
+    if (i == homeMenuCursor) {
+      tft.fillRect(2, itemY - 2, 124, 18, selBg);
       tft.setTextColor(selText, selBg);
     } else {
       tft.setTextColor(textCol, bgCol);
     }
-    tft.setCursor(6, itemY + 1);
-    tft.print(menuItems[i].name);
+    uint16_t iconColor = (i == homeMenuCursor) ? selText : textCol;
+    drawPixelIcon(6, itemY + 3, iconTypes[i], iconColor);
+    
+    tft.setCursor(18, itemY + 3);
+    tft.print(options[i]);
   }
 
-  tft.setTextColor(textCol, bgCol);
   tft.setCursor(2, 145);
-  tft.print("[UP/DN] Move [SEL] Open");
+  tft.setTextColor(textCol, bgCol);
+  tft.print("[UP/DN] Move [SEL] Select");
 }
 
 void drawSettingsPage() {
@@ -401,35 +443,87 @@ void drawSettingsPage() {
   uint16_t selText = (accentColorIndex == 2 || accentColorIndex == 3) ? ST7735_BLACK : ST7735_WHITE;
 
   tft.fillScreen(bgCol);
-  tft.fillRect(0, 0, 128, 14, accentColors[accentColorIndex]);
+  tft.fillRect(0, 0, 128, 14, selBg);
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(1);
   tft.setCursor(2, 3);
   tft.print("Settings");
 
-  String sItems[4] = {
+  String sItems[7] = {
     darkMode ? "Theme: Dark" : "Theme: Light",
     "Accent: " + accentNames[accentColorIndex],
-    "Auto-Sleep: " + sleepNames[autoSleepLevel],
+    "Set Hour: " + String(clockHours),
+    "Set Minute: " + String(clockMins),
+    "Wi-Fi Setup",
+    "Auto-Sleep: " + (autoSleepLevel == 0 ? "OFF" : String(sleepIntervals[autoSleepLevel]/1000) + "s"),
     "[ SAVE & EXIT ]"
   };
 
-  int startY = 28;
-  for (int i = 0; i < 4; i++) {
-    int itemY = startY + (i * 26);
+  int startY = 16;
+  for (int i = 0; i < 7; i++) {
+    int itemY = startY + (i * 18);
     if (i == settingsCursor) {
-      tft.fillRect(10, itemY - 2, 108, 18, selBg);
+      tft.fillRect(4, itemY - 2, 120, 15, selBg);
       tft.setTextColor(selText, selBg);
     } else {
       tft.setTextColor(textCol, bgCol);
     }
-    tft.setCursor(16, itemY + 3);
+    tft.setCursor(8, itemY + 1);
     tft.print(sItems[i]);
   }
 
   tft.setCursor(2, 145);
   tft.setTextColor(textCol, bgCol);
-  tft.print("[UP/DN] Move [SEL] Select");
+  tft.print("[UP/DN] Change [SEL] Next");
+}
+
+void drawHistoryPage() {
+  uint16_t bgCol = darkMode ? ST7735_BLACK : ST7735_WHITE;
+  uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
+  uint16_t selBg = accentColors[accentColorIndex];
+  uint16_t selText = (accentColorIndex == 2 || accentColorIndex == 3) ? ST7735_BLACK : ST7735_WHITE;
+
+  tft.fillScreen(bgCol);
+  tft.fillRect(0, 0, 128, 14, selBg);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(2, 3);
+  tft.print("History");
+
+  if (historyCount == 0) {
+    tft.setCursor(10, 40);
+    tft.setTextColor(textCol);
+    tft.print("History is empty.");
+  } else {
+    int startY = 25;
+    for (int i = 0; i < historyCount && i < 10; i++) {
+      int itemY = startY + (i * 12);
+      if (i == historyCursor) {
+        tft.fillRect(2, itemY - 1, 124, 11, selBg);
+        tft.setTextColor(selText, selBg);
+      } else {
+        tft.setTextColor(textCol, bgCol);
+      }
+      tft.setCursor(4, itemY);
+      String tStr = historyTitles[i];
+      if (tStr.length() > 18) tStr = tStr.substring(0, 18);
+      tft.print(tStr);
+    }
+    
+    int clearY = startY + (historyCount * 12) + 4;
+    if (historyCursor == historyCount) {
+      tft.fillRect(2, clearY - 1, 124, 11, selBg);
+      tft.setTextColor(selText, selBg);
+    } else {
+      tft.setTextColor(ST7735_RED, bgCol);
+    }
+    tft.setCursor(4, clearY);
+    tft.print("[ Clear History ]");
+  }
+
+  tft.setCursor(2, 145);
+  tft.setTextColor(textCol, bgCol);
+  tft.print("[SEL]=Open [PWR]=Back");
 }
 
 void drawWifiScanPage() {
@@ -461,14 +555,21 @@ void drawWifiScanPage() {
       }
       tft.setCursor(4, itemY);
       String ssidStr = foundNetworks[i];
-      if (ssidStr.length() > 18) ssidStr = ssidStr.substring(0, 18);
+      if (ssidStr.length() > 14) ssidStr = ssidStr.substring(0, 14);
       tft.print(ssidStr);
+
+      tft.setCursor(110, itemY);
+      if (foundNetworks[i] == savedSsid && WiFi.status() == WL_CONNECTED) {
+        tft.print("[V]");
+      } else if (foundEncrypted[i]) {
+        tft.print("[#]");
+      }
     }
   }
 
   tft.setCursor(2, 145);
   tft.setTextColor(textCol, bgCol);
-  tft.print("[UP/DN] Move [SEL] Choose");
+  tft.print("[SEL] Connect [PWR] Back");
 }
 
 void drawVirtualKeyboard() {
@@ -482,11 +583,7 @@ void drawVirtualKeyboard() {
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(1);
   tft.setCursor(2, 3);
-  if (inputTargetType == "CUSTOM_URL") {
-    tft.print("Enter URL:");
-  } else {
-    tft.print("Wi-Fi Pass:");
-  }
+  tft.print("Enter URL:");
 
   tft.drawRect(4, 18, 120, 16, textCol);
   tft.setCursor(8, 22);
@@ -500,44 +597,70 @@ void drawVirtualKeyboard() {
 
   int startY = 42;
   for (int r = 0; r < 4; r++) {
-    int colsInRow = (kbMode == 2) ? symCols[r] : ((kbMode == 1) ? lowCols[r] : capsCols[r]);
-    int totalWidth = 120;
-    int keyWidth = totalWidth / colsInRow;
-    int startX = 4;
+    int y = startY + (r * 24);
+    if (r < 3) {
+      int keyWidth = 120 / 10;
+      for (int c = 0; c < 10; c++) {
+        String keyStr = (kbMode == 2) ? kbSym[r][c] : kbLow[r][c];
+        int x = 4 + (c * keyWidth);
+        int w = keyWidth - 2;
+        int h = 21;
 
-    for (int c = 0; c < colsInRow; c++) {
-      String keyStr = (kbMode == 2) ? kbSym[r][c] : ((kbMode == 1) ? kbLow[r][c] : kbCaps[r][c]);
-      int x = startX + (c * keyWidth);
-      int y = startY + (r * 24);
-      int w = keyWidth - 2;
-      int h = 21;
+        if (r == kbRow && c == kbCol) {
+          tft.fillRect(x, y, w, h, selBg);
+          tft.setTextColor(selText, selBg);
+        } else {
+          tft.fillRect(x, y, w, h, ST7735_DARKGRAY);
+          tft.setTextColor(ST7735_WHITE, ST7735_DARKGRAY);
+        }
 
-      if (r == kbRow && c == kbCol) {
-        tft.fillRect(x, y, w, h, selBg);
-        tft.setTextColor(selText, selBg);
-      } else {
-        tft.fillRect(x, y, w, h, ST7735_DARKGRAY);
-        tft.setTextColor(ST7735_WHITE, ST7735_DARKGRAY);
+        int textX = x + (w - (keyStr.length() * 6)) / 2;
+        tft.setCursor(textX, y + 7);
+        tft.print(keyStr);
       }
+    } else {
+      int widths[5] = {24, 48, 0, 24, 24}; 
+      int currentX = 4;
+      for (int c = 0; c < 5; c++) {
+        if (c == 2) continue; 
+        String keyStr = (kbMode == 2) ? kbSym[3][c] : kbLow[3][c];
+        int w = widths[c];
+        if (c == 1) w = 46; 
+        int h = 21;
 
-      int textX = x + (w - (keyStr.length() * 6)) / 2;
-      int textY = y + 7;
-      tft.setCursor(textX, textY);
-      tft.print(keyStr);
+        bool isSelected = false;
+        if (kbRow == 3) {
+          if (c == 1 && (kbCol == 1 || kbCol == 2)) isSelected = true;
+          else if (kbCol == c) isSelected = true;
+        }
+
+        if (isSelected) {
+          tft.fillRect(currentX, y, w, h, selBg);
+          tft.setTextColor(selText, selBg);
+        } else {
+          tft.fillRect(currentX, y, w, h, ST7735_DARKGRAY);
+          tft.setTextColor(ST7735_WHITE, ST7735_DARKGRAY);
+        }
+
+        int textX = currentX + (w - (keyStr.length() * 6)) / 2;
+        tft.setCursor(textX, y + 7);
+        tft.print(keyStr);
+
+        currentX += w + 2;
+      }
     }
   }
 
   tft.setCursor(2, 143);
   tft.setTextColor(textCol, bgCol);
-  tft.print("[SEL]=Type [PWR]=Bksp");
+  tft.print("[SEL]=Type [PWR]=Back");
 }
 
-void drawContentPage() {
+void drawContentView() {
   uint16_t bgCol = darkMode ? ST7735_BLACK : ST7735_WHITE;
   uint16_t textCol = darkMode ? ST7735_WHITE : ST7735_BLACK;
   uint16_t selBg = accentColors[accentColorIndex];
   uint16_t selText = (accentColorIndex == 2 || accentColorIndex == 3) ? ST7735_BLACK : ST7735_WHITE;
-
   uint16_t normalCursorBg = darkMode ? ST7735_DARKGRAY : ST7735_LIGHTGRAY;
   uint16_t normalCursorText = darkMode ? ST7735_WHITE : ST7735_BLACK;
 
@@ -547,18 +670,13 @@ void drawContentPage() {
   tft.setTextSize(1);
   tft.setCursor(2, 3);
   
-  String dispTitle = currentPageTitle;
+  String dispTitle = incognitoMode ? "[Incognito] " + currentPageTitle : currentPageTitle;
   if (dispTitle.length() > 13) dispTitle = dispTitle.substring(0, 13);
   tft.print(dispTitle);
-  
   drawNetworkStatus();
 
-  if (browserCursorY < scrollOffset) {
-    scrollOffset = browserCursorY;
-  }
-  if (browserCursorY >= scrollOffset + 11) {
-    scrollOffset = browserCursorY - 10;
-  }
+  if (viewerCursorY < scrollOffset) scrollOffset = viewerCursorY;
+  if (viewerCursorY >= scrollOffset + 11) scrollOffset = viewerCursorY - 10;
 
   int startY = 18;
   for (int i = scrollOffset; i < totalLines; i++) {
@@ -566,7 +684,7 @@ void drawContentPage() {
     
     if (screenLines[i].isHeader) {
       tft.setTextSize(2); 
-      if (i == browserCursorY) {
+      if (i == viewerCursorY) {
         int w = screenLines[i].text.length() * 12;
         tft.fillRect(2, startY - 1, w + 4, 16, selBg);
         tft.setTextColor(selText, selBg);
@@ -578,7 +696,7 @@ void drawContentPage() {
     } else {
       tft.setTextSize(1);
       
-      if (i == browserCursorY) {
+      if (i == viewerCursorY) {
         int w = screenLines[i].text.length() * 6;
         if (screenLines[i].isLink) {
           tft.fillRect(2, startY - 1, w + 4, 10, selBg);
@@ -596,30 +714,8 @@ void drawContentPage() {
       tft.print(screenLines[i].text);
       startY += 10; 
     }
-    
     if (startY > 145) break; 
   }
-
-  if (totalLines > 11) {
-    int scrollbarHeight = 130;
-    int thumbHeight = max(10, scrollbarHeight * 11 / totalLines);
-    int thumbY = 16 + (scrollOffset * (scrollbarHeight - thumbHeight) / max(1, (totalLines - 11)));
-    tft.drawFastVLine(126, 16, scrollbarHeight, textCol);
-    tft.fillRect(125, thumbY, 3, thumbHeight, ST7735_RED);
-  }
-}
-
-void drawErrorPage(String errMsg) {
-  totalLines = 0;
-  currentPageTitle = "Error";
-  addWrappedText("Failed to connect!", true, false, "", ST7735_RED);
-  addWrappedText(errMsg, false, false, "", darkMode ? ST7735_WHITE : ST7735_BLACK);
-  addWrappedText("---------------------", false, false, "", ST7735_DARKGRAY);
-  addWrappedText("<- go to menu", false, true, "HOME_BACK", accentColors[accentColorIndex]);
-  
-  browserCursorY = 3; 
-  scrollOffset = 0;
-  drawContentPage();
 }
 
 void fetchRealWebpage(String url, bool addToHistory) {
@@ -628,8 +724,8 @@ void fetchRealWebpage(String url, bool addToHistory) {
   uint16_t selBg = accentColors[accentColorIndex];
 
   if (url == "HOME_BACK") {
-    currentState = STATE_HOME;
-    drawHomePage();
+    browserState = BSTATE_HOME;
+    drawBrowserHome();
     return;
   }
 
@@ -652,12 +748,11 @@ void fetchRealWebpage(String url, bool addToHistory) {
       String payload = http.getString();
       parseHTMLToLines(payload); 
       
-      if (addToHistory) {
-        if (historyPos < 9) {
-          historyPos++;
-          historyUrls[historyPos] = url;
-          historyTitles[historyPos] = currentPageTitle;
-          historyCount = historyPos + 1;
+      if (addToHistory && !incognitoMode) {
+        if (historyCount < 10) {
+          historyUrls[historyCount] = url;
+          historyTitles[historyCount] = currentPageTitle;
+          historyCount++;
         } else {
           for (int i = 0; i < 9; i++) {
             historyUrls[i] = historyUrls[i + 1];
@@ -665,23 +760,26 @@ void fetchRealWebpage(String url, bool addToHistory) {
           }
           historyUrls[9] = url;
           historyTitles[9] = currentPageTitle;
-          historyCount = 10;
-          historyPos = 9;
         }
       }
     } else {
-      drawErrorPage("HTTP Error code: " + String(httpCode));
-      return;
+      totalLines = 0;
+      currentPageTitle = "Error";
+      addWrappedText("HTTP Error: " + String(httpCode), true, false, "", ST7735_RED);
+      addWrappedText("<- Back", false, true, "HOME_BACK", accentColors[accentColorIndex]);
     }
   } else {
-    drawErrorPage("Check network & URL!");
-    return;
+    totalLines = 0;
+    currentPageTitle = "Error";
+    addWrappedText("Connection failed!", true, false, "", ST7735_RED);
+    addWrappedText("<- Back", false, true, "HOME_BACK", accentColors[accentColorIndex]);
   }
   http.end();
 
-  browserCursorY = 0; 
+  viewerCursorY = 0; 
   scrollOffset = 0;
-  drawContentPage();
+  browserState = BSTATE_VIEWER;
+  drawContentView();
 }
 
 void setup() {
@@ -709,7 +807,8 @@ void setup() {
     delay(100);
   }
 
-  drawHomePage();
+  browserState = BSTATE_HOME;
+  drawBrowserHome();
   resetSleepTimer();
 }
 
@@ -717,17 +816,26 @@ unsigned long lastDebounce = 0;
 const int delayTime = 150; 
 
 void loop() {
-  bool currentPowerState = digitalRead(BTN_POWER);
+  updateClock();
 
+  if (!isScreenOff && !isScreenLocked && autoSleepLevel > 0) {
+    if (millis() - lastActivityTime > sleepIntervals[autoSleepLevel]) {
+      fadeOutBacklight();
+      isScreenOff = true;
+      isScreenLocked = true;
+    }
+  }
+
+  bool currentPowerState = digitalRead(BTN_POWER);
   if (currentPowerState == LOW) {
     if (lastPowerState == HIGH) {
       powerPressStartTime = millis();
       powerHeldTriggered = false;
     } else if (!powerHeldTriggered && (millis() - powerPressStartTime > 5000)) {
       powerHeldTriggered = true; 
-      if (currentState != STATE_REBOOT_MENU) {
-        prevState = currentState;
-        currentState = STATE_REBOOT_MENU;
+      if (browserState != BSTATE_REBOOT_MENU) {
+        previousBrowserState = browserState;
+        browserState = BSTATE_REBOOT_MENU;
         drawRebootMenu();
       }
     }
@@ -735,11 +843,15 @@ void loop() {
     if (lastPowerState == LOW) {
       if (!powerHeldTriggered) { 
         if (millis() - lastDebounce > 300) {
-          screenOn = !screenOn;
-          if (screenOn) {
-            fadeInBacklight();
-          } else {
+          if (!isScreenOff) {
             fadeOutBacklight();
+            isScreenOff = true;
+            isScreenLocked = true;
+          } else {
+            isScreenLocked = true;
+            isScreenOff = false;
+            drawLockScreen();
+            fadeInBacklight();
           }
           lastDebounce = millis();
           resetSleepTimer();
@@ -749,342 +861,276 @@ void loop() {
   }
   lastPowerState = currentPowerState;
 
-  if (currentState == STATE_REBOOT_MENU) {
+  if (browserState == BSTATE_REBOOT_MENU) {
     if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > 200) {
       ESP.restart();
     }
     if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > 200) {
-      currentState = prevState;
-      if (currentState == STATE_HOME) drawHomePage();
-      else if (currentState == STATE_SETTINGS) drawSettingsPage();
-      else if (currentState == STATE_WIFI_SCAN) drawWifiScanPage();
-      else if (currentState == STATE_KEYBOARD) drawVirtualKeyboard();
-      else if (currentState == STATE_BROWSER) drawContentPage();
+      browserState = previousBrowserState;
+      drawCurrentState();
       lastDebounce = millis();
     }
     return;
   }
 
-  if (screenOn && autoSleepLevel > 0 && !isSleeping) {
-    if (millis() - lastActivityTime > sleepIntervals[autoSleepLevel]) {
-      isSleeping = true;
-      fadeOutBacklight();
-    }
-  }
-
-  if (!screenOn || isSleeping) {
+  if (isScreenOff) {
     if (digitalRead(BTN_UP) == LOW || digitalRead(BTN_DOWN) == LOW || 
         digitalRead(BTN_SELECT) == LOW || digitalRead(BTN_BACK_PG) == LOW || 
         digitalRead(BTN_FORWARD_PG) == LOW) {
       if (millis() - lastDebounce > 200) {
-        if (!screenOn) {
-          screenOn = true;
-          fadeInBacklight();
-        } else if (isSleeping) {
-          isSleeping = false;
-          fadeInBacklight();
-        }
+        isScreenOff = false;
+        isScreenLocked = true;
+        drawLockScreen();
+        fadeInBacklight();
         resetSleepTimer();
         lastDebounce = millis();
       }
     }
-    return; 
+    return;
   }
 
-  if (currentState == STATE_HOME) {
-    if (digitalRead(BTN_UP) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        cursorIndex = (cursorIndex - 1 + menuCount) % menuCount;
-        drawHomePage();
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
-    }
-    if (digitalRead(BTN_DOWN) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        cursorIndex = (cursorIndex + 1) % menuCount;
-        drawHomePage();
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
-    }
+  if (isScreenLocked) {
     if (digitalRead(BTN_SELECT) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (cursorIndex == 1) {
-          // Custom URL
-          currentState = STATE_KEYBOARD;
-          inputTargetType = "CUSTOM_URL";
-          keyboardInputText = "https://";
-          kbRow = 0; kbCol = 0; kbMode = 1; // Ставим маленькие буквы
-          drawVirtualKeyboard();
-        } else if (cursorIndex == 2) {
-          // Разделитель
-        } else if (cursorIndex == 3) {
-          // Wi-Fi Setup
-          currentState = STATE_WIFI_SCAN;
-          wifiCursor = 0;
-          
-          tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
-          tft.setCursor(2, 20);
-          tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
-          tft.print("Scanning Wi-Fi...");
-          
-          WiFi.mode(WIFI_STA);
-          WiFi.disconnect();
-          delay(100);
-          
-          wifiNetworkCount = WiFi.scanNetworks();
-          for (int i = 0; i < wifiNetworkCount && i < 10; i++) {
-            foundNetworks[i] = WiFi.SSID(i);
-          }
-          drawWifiScanPage();
-        } else if (cursorIndex == 4) {
-          // Settings
-          currentState = STATE_SETTINGS;
-          settingsCursor = 0;
-          drawSettingsPage();
-        } else {
-          // Сайты из списка
-          currentState = STATE_BROWSER;
-          historyPos = -1;
-          historyCount = 0;
-          fetchRealWebpage(menuItems[cursorIndex].url, true);
-        }
+      if (millis() - lastDebounce > 200) {
+        isScreenLocked = false;
+        drawCurrentState();
         resetSleepTimer();
         lastDebounce = millis();
       }
+    }
+    return;
+  }
+
+  bool anyButtonPressed = (digitalRead(BTN_UP) == LOW || digitalRead(BTN_DOWN) == LOW || 
+                           digitalRead(BTN_SELECT) == LOW || digitalRead(BTN_BACK_PG) == LOW || 
+                           digitalRead(BTN_FORWARD_PG) == LOW);
+  if (anyButtonPressed) {
+    resetSleepTimer();
+  }
+
+  if (browserState == BSTATE_HOME) {
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      homeMenuCursor = (homeMenuCursor - 1 + 5) % 5;
+      drawBrowserHome();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      homeMenuCursor = (homeMenuCursor + 1) % 5;
+      drawBrowserHome();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      if (homeMenuCursor == 0) {
+        browserState = BSTATE_KEYBOARD;
+        keyboardInputText = "https://";
+        kbRow = 0; kbCol = 0; kbMode = 1;
+        drawVirtualKeyboard();
+      } else if (homeMenuCursor == 1) {
+        // Quick Demo Page всегда загружает стандартный URL
+        String demoUrl = "https://kriperboom.github.io/ESP-nokiabrouser/index.html";
+        fetchRealWebpage(demoUrl, true);
+      } else if (homeMenuCursor == 2) {
+        browserState = BSTATE_HISTORY;
+        historyCursor = 0;
+        drawHistoryPage();
+      } else if (homeMenuCursor == 3) {
+        incognitoMode = !incognitoMode;
+        drawBrowserHome();
+      } else if (homeMenuCursor == 4) {
+        browserState = BSTATE_SETTINGS;
+        settingsCursor = 0;
+        drawSettingsPage();
+      }
+      lastDebounce = millis();
     }
   } 
-  else if (currentState == STATE_SETTINGS) {
-    if (digitalRead(BTN_UP) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        settingsCursor = (settingsCursor - 1 + 4) % 4;
-        drawSettingsPage();
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+  else if (browserState == BSTATE_SETTINGS) {
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      settingsCursor = (settingsCursor - 1 + 7) % 7;
+      drawSettingsPage();
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_DOWN) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        settingsCursor = (settingsCursor + 1) % 4;
-        drawSettingsPage();
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      settingsCursor = (settingsCursor + 1) % 7;
+      drawSettingsPage();
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_SELECT) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (settingsCursor == 0) {
-          darkMode = !darkMode; 
-        } else if (settingsCursor == 1) {
-          accentColorIndex = (accentColorIndex + 1) % 4; 
-        } else if (settingsCursor == 2) {
-          autoSleepLevel = (autoSleepLevel + 1) % 4; 
-        } else if (settingsCursor == 3) {
-          currentState = STATE_HOME;
-          drawHomePage();
-          resetSleepTimer();
-          lastDebounce = millis();
-          return;
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      if (settingsCursor == 0) darkMode = !darkMode;
+      else if (settingsCursor == 1) accentColorIndex = (accentColorIndex + 1) % 4;
+      else if (settingsCursor == 2) clockHours = (clockHours + 1) % 24;
+      else if (settingsCursor == 3) clockMins = (clockMins + 5) % 60;
+      else if (settingsCursor == 4) {
+        browserState = BSTATE_WIFI_SCAN;
+        wifiCursor = 0;
+        tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
+        tft.setCursor(2, 20);
+        tft.print("Scanning Wi-Fi...");
+        wifiNetworkCount = WiFi.scanNetworks();
+        for (int i = 0; i < wifiNetworkCount && i < 10; i++) {
+          foundNetworks[i] = WiFi.SSID(i);
+          foundEncrypted[i] = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
         }
-        drawSettingsPage();
-        resetSleepTimer();
-        lastDebounce = millis();
+        drawWifiScanPage();
+        return;
       }
+      else if (settingsCursor == 5) autoSleepLevel = (autoSleepLevel + 1) % 4;
+      else if (settingsCursor == 6) {
+        browserState = BSTATE_HOME;
+        drawBrowserHome();
+        lastDebounce = millis();
+        return;
+      }
+      drawSettingsPage();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > delayTime) {
+      browserState = BSTATE_HOME;
+      drawBrowserHome();
+      lastDebounce = millis();
     }
   }
-  else if (currentState == STATE_WIFI_SCAN) {
-    if (digitalRead(BTN_UP) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (wifiNetworkCount > 0) {
-          wifiCursor = (wifiCursor - 1 + wifiNetworkCount) % wifiNetworkCount;
-          drawWifiScanPage();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+  else if (browserState == BSTATE_HISTORY) {
+    int maxItems = (historyCount > 0) ? historyCount + 1 : 1;
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      historyCursor = (historyCursor - 1 + maxItems) % maxItems;
+      drawHistoryPage();
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_DOWN) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (wifiNetworkCount > 0) {
-          wifiCursor = (wifiCursor + 1) % wifiNetworkCount;
-          drawWifiScanPage();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      historyCursor = (historyCursor + 1) % maxItems;
+      drawHistoryPage();
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_SELECT) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (wifiNetworkCount > 0) {
-          tempSsid = foundNetworks[wifiCursor];
-          currentState = STATE_KEYBOARD;
-          inputTargetType = "PASS"; 
-          keyboardInputText = "";
-          kbRow = 0; kbCol = 0;
-          kbMode = 1; // Маленькие буквы по умолчанию
-          drawVirtualKeyboard();
-        } else {
-          currentState = STATE_HOME;
-          drawHomePage();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      if (historyCount > 0 && historyCursor == historyCount) {
+        historyCount = 0;
+        historyCursor = 0;
+        drawHistoryPage();
+      } else if (historyCount > 0) {
+        fetchRealWebpage(historyUrls[historyCursor], false);
       }
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > delayTime) {
+      browserState = BSTATE_HOME;
+      drawBrowserHome();
+      lastDebounce = millis();
     }
   }
-  else if (currentState == STATE_KEYBOARD) {
-    int maxCols = (kbMode == 2) ? symCols[kbRow] : ((kbMode == 1) ? lowCols[kbRow] : capsCols[kbRow]);
-
-    if (digitalRead(BTN_UP) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        kbRow = (kbRow - 1 + 4) % 4;
-        int newMax = (kbMode == 2) ? symCols[kbRow] : ((kbMode == 1) ? lowCols[kbRow] : capsCols[kbRow]);
-        if (kbCol >= newMax) kbCol = newMax - 1;
-        drawVirtualKeyboard();
-        resetSleepTimer();
-        lastDebounce = millis();
+  else if (browserState == BSTATE_WIFI_SCAN) {
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      if (wifiNetworkCount > 0) {
+        wifiCursor = (wifiCursor - 1 + wifiNetworkCount) % wifiNetworkCount;
+        drawWifiScanPage();
       }
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_DOWN) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        kbRow = (kbRow + 1) % 4;
-        int newMax = (kbMode == 2) ? symCols[kbRow] : ((kbMode == 1) ? lowCols[kbRow] : capsCols[kbRow]);
-        if (kbCol >= newMax) kbCol = newMax - 1;
-        drawVirtualKeyboard();
-        resetSleepTimer();
-        lastDebounce = millis();
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      if (wifiNetworkCount > 0) {
+        wifiCursor = (wifiCursor + 1) % wifiNetworkCount;
+        drawWifiScanPage();
       }
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_BACK_PG) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        int curMax = (kbMode == 2) ? symCols[kbRow] : ((kbMode == 1) ? lowCols[kbRow] : capsCols[kbRow]);
-        kbCol = (kbCol - 1 + curMax) % curMax;
-        drawVirtualKeyboard();
-        resetSleepTimer();
-        lastDebounce = millis();
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      if (wifiNetworkCount > 0) {
+        savedSsid = foundNetworks[wifiCursor];
+        savedPass = "";
+        WiFi.begin(savedSsid.c_str(), savedPass.c_str());
+        delay(1000);
       }
+      browserState = BSTATE_SETTINGS;
+      drawSettingsPage();
+      lastDebounce = millis();
     }
-    if (digitalRead(BTN_FORWARD_PG) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        int curMax = (kbMode == 2) ? symCols[kbRow] : ((kbMode == 1) ? lowCols[kbRow] : capsCols[kbRow]);
-        kbCol = (kbCol + 1) % curMax;
-        drawVirtualKeyboard();
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
-    }
-
-    if (digitalRead(BTN_SELECT) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        String selChar = (kbMode == 2) ? kbSym[kbRow][kbCol] : ((kbMode == 1) ? kbLow[kbRow][kbCol] : kbCaps[kbRow][kbCol]);
-        
-        if (selChar == "DEL") {
-          if (keyboardInputText.length() > 0) {
-            keyboardInputText = keyboardInputText.substring(0, keyboardInputText.length() - 1);
-          }
-        } else if (selChar == "ENT") {
-          if (inputTargetType == "CUSTOM_URL") {
-            String targetUrl = keyboardInputText;
-            currentState = STATE_BROWSER;
-            historyPos = -1;
-            historyCount = 0;
-            fetchRealWebpage(targetUrl, true);
-          } else {
-            savedSsid = tempSsid;
-            savedPass = keyboardInputText;
-            
-            tft.fillScreen(darkMode ? ST7735_BLACK : ST7735_WHITE);
-            tft.setCursor(2, 20);
-            tft.setTextColor(darkMode ? ST7735_WHITE : ST7735_BLACK);
-            tft.print("Connecting to:\n" + savedSsid);
-            
-            WiFi.begin(savedSsid.c_str(), savedPass.c_str());
-            int timeout = 0;
-            while (WiFi.status() != WL_CONNECTED && timeout < 15) {
-              delay(500);
-              timeout++;
-            }
-            
-            currentState = STATE_HOME;
-            drawHomePage();
-          }
-        } else if (selChar == "SPC") {
-          keyboardInputText += " ";
-        } else if (selChar == "^") {
-          if (kbMode == 0) kbMode = 1;
-          else if (kbMode == 1) kbMode = 0;
-          else kbMode = 0;
-        } else if (selChar == "123" || selChar == "ABC") {
-          if (kbMode == 2) kbMode = 0; 
-          else kbMode = 2; 
-          kbRow = 0; kbCol = 0;
-        } else {
-          keyboardInputText += selChar;
-        }
-        
-        if (currentState == STATE_KEYBOARD) {
-          drawVirtualKeyboard();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > delayTime) {
+      browserState = BSTATE_SETTINGS;
+      drawSettingsPage();
+      lastDebounce = millis();
     }
   }
-  else if (currentState == STATE_BROWSER) {
-    if (digitalRead(BTN_BACK_PG) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (historyPos > 0) {
-          historyPos--;
-          fetchRealWebpage(historyUrls[historyPos], false);
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+  else if (browserState == BSTATE_KEYBOARD) {
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      kbRow = (kbRow - 1 + 4) % 4;
+      if (kbRow == 3 && kbCol > 4) kbCol = 4;
+      drawVirtualKeyboard();
+      lastDebounce = millis();
     }
-
-    if (digitalRead(BTN_FORWARD_PG) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (historyPos < historyCount - 1) {
-          historyPos++;
-          fetchRealWebpage(historyUrls[historyPos], false);
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      kbRow = (kbRow + 1) % 4;
+      if (kbRow == 3 && kbCol > 4) kbCol = 4;
+      drawVirtualKeyboard();
+      lastDebounce = millis();
     }
-
-    if (digitalRead(BTN_UP) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (browserCursorY > 0) {
-          browserCursorY--;
-          drawContentPage();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_BACK_PG) == LOW && millis() - lastDebounce > delayTime) {
+      int maxC = (kbRow == 3) ? 4 : 9;
+      kbCol = (kbCol - 1 + (maxC + 1)) % (maxC + 1);
+      drawVirtualKeyboard();
+      lastDebounce = millis();
     }
-
-    if (digitalRead(BTN_DOWN) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (browserCursorY < totalLines - 1) {
-          browserCursorY++;
-          drawContentPage();
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
-      }
+    if (digitalRead(BTN_FORWARD_PG) == LOW && millis() - lastDebounce > delayTime) {
+      int maxC = (kbRow == 3) ? 4 : 9;
+      kbCol = (kbCol + 1) % (maxC + 1);
+      drawVirtualKeyboard();
+      lastDebounce = millis();
     }
-
-    if (digitalRead(BTN_SELECT) == LOW) {
-      if (millis() - lastDebounce > delayTime) {
-        if (screenLines[browserCursorY].isLink) {
-          String targetUrl = screenLines[browserCursorY].linkUrl;
-          fetchRealWebpage(targetUrl, true);
-        }
-        resetSleepTimer();
-        lastDebounce = millis();
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      String selChar = "";
+      if (kbRow < 3) {
+        selChar = (kbMode == 2) ? kbSym[kbRow][kbCol] : kbLow[kbRow][kbCol];
+      } else {
+        if (kbCol == 0) selChar = (kbMode == 2) ? "ABC" : "123";
+        else if (kbCol == 1 || kbCol == 2) selChar = "[_]";
+        else if (kbCol == 3) selChar = "DEL";
+        else if (kbCol == 4) selChar = "ENT";
       }
+
+      if (selChar == "DEL") {
+        if (keyboardInputText.length() > 0) keyboardInputText = keyboardInputText.substring(0, keyboardInputText.length() - 1);
+      } else if (selChar == "ENT") {
+        currentUrl = keyboardInputText;
+        lastDebounce = millis();
+        fetchRealWebpage(currentUrl, true);
+        return; // Прерываем цикл, чтобы состояние переключилось на VIEWER и код не обрабатывал клавиатуру дальше в этом же кадре
+      } else if (selChar == "[_]") {
+        keyboardInputText += " ";
+      } else if (selChar == "123" || selChar == "ABC") {
+        kbMode = (kbMode == 2) ? 1 : 2;
+      } else {
+        keyboardInputText += selChar;
+      }
+      drawVirtualKeyboard();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > delayTime) {
+      browserState = BSTATE_HOME;
+      drawBrowserHome();
+      lastDebounce = millis();
+    }
+  }
+  else if (browserState == BSTATE_VIEWER) {
+    if (digitalRead(BTN_UP) == LOW && millis() - lastDebounce > delayTime) {
+      if (viewerCursorY > 0) viewerCursorY--;
+      drawContentView();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_DOWN) == LOW && millis() - lastDebounce > delayTime) {
+      if (viewerCursorY < totalLines - 1) viewerCursorY++;
+      drawContentView();
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastDebounce > delayTime) {
+      if (screenLines[viewerCursorY].isLink) {
+        String targetUrl = screenLines[viewerCursorY].linkUrl;
+        fetchRealWebpage(targetUrl, true);
+      }
+      lastDebounce = millis();
+    }
+    if (digitalRead(BTN_POWER) == LOW && millis() - lastDebounce > delayTime) {
+      browserState = BSTATE_HOME;
+      drawBrowserHome();
+      lastDebounce = millis();
     }
   }
 }

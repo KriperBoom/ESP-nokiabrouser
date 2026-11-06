@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>CPhone Calc</title>
+</head>
+<body>
+    <h1>CPhone Calc</h1>
+    
+    <p>welcom to mini web brouser ESP32!</p>
+    
+    <!-- Поле ввода для первого числа -->
+    <input type="text" id="num1" placeholder="Первое число...">
+    
+    <!-- Поле ввода для второго числа -->
+    <input type="text" id="num2" placeholder="Второе число...">
+
+    <p style="color: cyan;">Raschet</p>
+
+    <!-- Кнопки управления -->
+    <button onclick="calculate('+')">(+)</button>
+    <button onclick="calculate('-')">(-)</button>
+    <button onclick="calculate('*')">(*)</button>
+    <button onclick="calculate('/')">(/)</button>
+
+    <h1 id="result">resalt</h1>
+
+    <p><a href="https://github.com/kriperboom">open GitHub autor</a></p>
+
+    <script>
+        function calculate(op) {
+            let n1 = parseFloat(document.getElementById('num1').value);
+            let n2 = parseFloat(document.getElementById('num2').value);
+            let res = 0;
+
+            if (isNaN(n1) || isNaN(n2)) {
+                document.getElementById('result').innerText = "Ошибка ввода!";
+                return;
+            }
+
+            if (op === '+') res = n1 + n2;
+            if (op === '-') res = n1 - n2;
+            if (op === '*') res = n1 * n2;
+            if (op === '/') res = n2 !== 0 ? n1 / n2 : "На ноль нельзя!";
+
+            document.getElementById('result').innerText = "Итог: " + res;
+        }
+    </script>
+</body>
+</html>
